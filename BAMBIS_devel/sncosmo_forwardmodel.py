@@ -1,6 +1,7 @@
 import numpy as np
 from astropy.table import Table,Column
 import os,sys
+import time
 from matplotlib import pyplot as plt
 from scipy.stats import skewnorm
 try:
@@ -42,24 +43,57 @@ class SncosmoSimulation(object):
 
 		self.totz=self.get_zdist()
 
+		start = time.time()
 		self.simlib_meta, self.simlib_obs_sets = self.read_simlib(simlib_file)
-		print self.simlib_obs_sets
-		
+		end = time.time()
+		if bench: print "Read simlib file in ", end-start, "secs"
+	
+	
 		self.c_pdf =c_pdf ; self.c_params=c_params
 		self.x1_pdf =x1_pdf ; self.x1_params=x1_params
 
+		start = time.time()
 		self.generate_random_c_x1()
+		end = time.time()
+		if bench: print "c-x1 generated in ", end-start, "secs"
 		self.generate_t0()
 
 		#EJ: Note the model needs to be downloaded at this point - is there 
 		#anyway we can avoid this for users who are not online?
-		self.model = sncosmo.Model(source='salt2')
+		dust = sncosmo.CCM89Dust()
+		self.model = sncosmo.Model(source='salt2-extended',effects=[dust, dust],effect_names=['host', 'mw'],\
+		effect_frames=['rest', 'obs'])
 		self.get_parameter_list()
+		self.generate_lcs()
+		start = time.time()
+		self.fit_lcs()
+		end = time.time()
+		if bench: print "Fitting took", end-start, "secs"
+
+	def fit_lcs(self):
+		self.fit_results=[]
+		for lc in self.lcs:
+			res, fitted_model = sncosmo.fit_lc(lc[0], self.model,['x0', 'x1', 'c'],\
+			bounds={'x1':(-3.0, 3.0), 'c':(-0.3,0.3)}, minsnr =3.0)
+			self.fit_results.append(res)
+		print res.keys()
+		print res['param_names']
+		print res['parameters']
+		print res['covariance']
+		print len(self.fit_results)
 		
-		#EJ: running this last line gives an 
-		#error as I think the FLT column from the simlib should be BAND or the values in BAND 
-		#should be desg, desr, desi, desz etc..will check with Kyle
-		#self.lcs = sncosmo.realize_lcs(self.simlib_obs_sets, self.model, self.params)
+
+	def generate_lcs(self):
+		if bench: print "Generating lcs...."
+		self.lcs=[]
+		start = time.time()
+		for p in self.params:
+			libid = 2498 #EJ: Nov 7th right now just generate all with same libid. need to sort times so monotonic so we can use any libid
+			#libid = np.random.choice(self.simlib_obs_sets.keys())
+			self.lcs.append(sncosmo.realize_lcs(self.simlib_obs_sets[libid], self.model, [p]))
+		end = time.time()
+		print "Time", end-start
+		print type(self.lcs[0][0])
 		
 
 	def get_parameter_list(self):
@@ -101,16 +135,32 @@ class SncosmoSimulation(object):
 			libfile = 'DES_DIFFIMG.SIMLIB' #NOTE: THE SIMLIB INDEX STARTS AT 1, NOT 0#
 		if bench:
 			print "Reading the simlib file. This might take a few minutes..."	
-		return sncosmo.read_snana_simlib(libfile)
-			
+		meta,obs= sncosmo.read_snana_simlib(libfile)
+		for id in obs.keys():
+			#obs[id].rename_column('FLT', 'band')
+			obs[id]['band'] = ['desg']*len(obs[id]['FLT'])
+			for ii,val in enumerate(obs[id]['FLT']):
+				if val =='g': obs[id]['band'][ii] = 'desg'
+				if val =='r': obs[id]['band'][ii] = 'desr'
+				if val =='i': obs[id]['band'][ii] = 'desi'
+				if val =='z': obs[id]['band'][ii] = 'desz'
+			obs[id].rename_column('MJD', 'time')
+			obs[id].rename_column('CCD_GAIN', 'gain') 
+			obs[id].rename_column('SKYSIG', 'skynoise') 
+			obs[id].rename_column('ZPTAVG', 'zp') 
+			obs[id]['zpsys'] = ['ab']*len(obs[id]['gain'])
+		return meta,obs
 
 	def snana_snrate_loz(self,z):
-    		'''FROM SNANA_MAIN_FILE.input & SNANA MANUAL P.45'''
-    		return 2.6E-5*math.pow((1+z),1.5)
+    		'''FROM SNANA_MAIN_FILE.input'''
+    		#return 2.6E-5*math.pow((1+z),1.5)
+    		return 0.8E-3*math.pow((1+z),0.0)
+
 
 	def snana_snrate_hiz(self,z):
-    		'''FROM SNANA_MAIN_FILE.input & SNANA MANUAL P.45'''
-    		return 7.35E-5
+    		'''FROM SNANA_MAIN_FILE.input'''
+    		#return 7.35E-5
+    		return 2.6E-5*math.pow((1+z),1.5)
 
 	def DES_specific_zdist(self):
 		'''create dict specific to DES fields, areas are in deg^2, 
@@ -118,7 +168,7 @@ class SncosmoSimulation(object):
 		'''
         	xarea, carea, earea, sarea = 17.1173, 16.2981,11.6045,12.7980 
         	surveytime = 525 #540 
-		zmin, zmax, zcut = 0.05, 1.2, 1.0 
+		zmin, zmax, zcut = 0.0, 1., 0.08 
         	DES_fields = {'xlo':[xarea,zmin,zcut,self.snana_snrate_loz,surveytime],\
 			'xhi':[xarea,zcut,zmax,self.snana_snrate_hiz,surveytime],\
 			'clo':[carea,zmin,zcut,self.snana_snrate_loz,surveytime],\
