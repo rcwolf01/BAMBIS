@@ -26,7 +26,7 @@ bench = 1 #debugging flag to print to screen
 
 class SncosmoSimulation(object):
 	def __init__(self,survey_fields=None, simlib_file=None,simlib_obs_sets=None, c_pdf='Normal',\
-			 c_params=[0.5,1.2],x1_pdf='Normal',x1_params=[-0.05,0.15],\
+			 c_params=[-0.05,0.2],x1_pdf='Normal',x1_params=[0.5,1.0],\
 			 t0min = 56525.0,t0max=57070.0,NumSN = 500,minNumEpochs = 5,minNumFilters = 3, minSNR = 4.0,\
 			cosmo=None,alpha=0.14,beta=3.2,deltaM=0.0,zp_off=[0.0,0.0,0.0,0.0]):
 		'''Input: 
@@ -78,8 +78,8 @@ class SncosmoSimulation(object):
 		#EJ: Note the model needs to be downloaded at this point - is there 
 		#anyway we can avoid this for users who are not online?
 		dust = sncosmo.CCM89Dust()
-		self.model = sncosmo.Model(source='salt2-extended',effects=[dust, dust],effect_names=['host', 'mw'],\
-		effect_frames=['rest', 'obs'])
+		self.model = sncosmo.Model(source='salt2-extended',effects=[dust],effect_names=['mw'],\
+		effect_frames=['obs'])
 		self.get_parameter_list()
 		self.generate_lcs()
 		start = time.time()
@@ -106,17 +106,26 @@ class SncosmoSimulation(object):
 			plt.close()
 		
 		#print self.fit_results[0].keys(), self.fit_results[0]['param_names'], self.fit_results[0]['parameters']
-		#print self.fit_results[0]['parameters'][2]
+		#print self.fit_results[0]['parameters']
 		#print self.fit_results[0]['covariance'], self.fit_results[0]['covariance'].shape
-		#print self.simx0[0], self.simx1[0], self.simc[0]
+		#print self.totz[0],self.simt0[0], self.simx0[0], self.simx1[0], self.simc[0]
+		#print self.lcs[0][0]
+		#print self.lcs[0][0]
+		#print self.fitted_model[0]
+		sncosmo.plot_lc(self.lcs[0][0], model=self.fitted_model[0], errors=self.fit_results[0].errors)
+		plt.savefig("lc.png")
 		
 
 	def fit_lcs(self):
 		self.fit_results=[]
-		for lc in self.lcs:
-			res, fitted_model = sncosmo.fit_lc(lc[0], self.model,['x0', 'x1', 'c','t0'],\
-			bounds={'x1':(-3.0, 3.0), 'c':(-0.3,0.3)}, minsnr =self.minSNR)
+		self.fitted_model=[]
+		for jj,lc in enumerate(self.lcs):
+    			self.model.set(z=self.totz[jj])
+			res, fitted_model = sncosmo.fit_lc(lc[0], self.model,['z','x0', 'x1', 'c','t0'],\
+			bounds={'x1':(-3.0, 3.0), 'c':(-0.3,0.3),'z':(0.0,1.2)}, minsnr =self.minSNR)
 			self.fit_results.append(res)
+			self.fitted_model.append(fitted_model)
+
 
 	def impose_SNR_cuts(self,lc):
 		'''require minNumEpochs in at least minNumFilters with SNR>minSNR'''
@@ -136,9 +145,9 @@ class SncosmoSimulation(object):
 		self.lcs=[]
 		start = time.time()
 		for p in self.params:
-			libid = 2498 #EJ: Nov 7th right now just generate all with same libid. 
+			#libid = 2498 #EJ: Nov 7th right now just generate all with same libid. 
 			#Need to sort simlib times so they are monotonically increasing
-			#libid = np.random.choice(self.simlib_obs_sets.keys())
+			libid = np.random.choice(self.simlib_obs_sets.keys())
 			light_curve = sncosmo.realize_lcs(self.simlib_obs_sets[libid], self.model, [p])
 			flag = self.impose_SNR_cuts(light_curve[0])
 			#print type(light_curve[0]),light_curve[0]
@@ -298,6 +307,11 @@ if __name__=='__main__':
 	#This will take a while as we also need to sort all times in all bands
 	libfile = 'DES_DIFFIMG.SIMLIB' #NOTE: THE SIMLIB INDEX STARTS AT 1, NOT 0#
 	meta,obs=SncosmoSimulation.read_simlib(libfile)
+	print type(obs)
+	for libid in obs.keys():
+		 df = obs[libid].to_pandas()
+		 df=df.sort_values(by='time')
+		 obs[libid] = Table.from_pandas(df)
 
 	#parameters we might want to vary in sampler
 	cosmo = FlatwCDM(name='SNLS3+WMAP7', H0=71.58, Om0=0.262, w0=-1.0)
@@ -306,6 +320,6 @@ if __name__=='__main__':
 	deltaM = 0.0
 	zp_offset = [0.0,0.0,0.0,0.0] #griz
 
-	fm_sim = SncosmoSimulation(simlib_obs_sets=obs,cosmo = cosmo,alpha=alpha,beta=beta,deltaM=deltaM,zp_off = zp_offset,NumSN =500)
+	fm_sim = SncosmoSimulation(simlib_obs_sets=obs,cosmo = cosmo,alpha=alpha,beta=beta,deltaM=deltaM,zp_off = zp_offset,NumSN =50)
 
 
